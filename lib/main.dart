@@ -1,3 +1,20 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// main.dart — FitRoute
+// Entry point and all screens/widgets for the FitRoute app.
+//
+// Packages used:
+//   geolocator        → gets the user's GPS coordinates
+//   flutter_map       → displays the interactive OpenStreetMap map
+//   latlong2          → LatLng coordinate model used by flutter_map
+//   http              → makes HTTP requests to all third-party APIs
+//
+// Third-party APIs used (all free, no API key required):
+//   Open-Meteo        → live weather data
+//   OSRM              → snaps generated routes to real roads
+//   Nominatim         → reverse geocodes GPS coords to a city name
+//   OpenStreetMap     → map tile images shown inside flutter_map
+// ─────────────────────────────────────────────────────────────────────────────
+
 import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/material.dart';
@@ -6,11 +23,12 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart' hide Path;
 import 'package:http/http.dart' as http;
 
+// App entry point
 void main() {
   runApp(const FitRouteApp());
 }
 
-// ─── App ──────────────────────────────────────────────────────────────────────
+// ─── App Root ─────────────────────────────────────────────────────────────────
 
 class FitRouteApp extends StatelessWidget {
   const FitRouteApp({super.key});
@@ -21,7 +39,6 @@ class FitRouteApp extends StatelessWidget {
       title: 'FitRoute',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        fontFamily: 'SF Pro Display',
         scaffoldBackgroundColor: const Color(0xFFF7F8FA),
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF3B82F6)),
         useMaterial3: true,
@@ -31,24 +48,37 @@ class FitRouteApp extends StatelessWidget {
   }
 }
 
-// ─── Shared State ─────────────────────────────────────────────────────────────
+// ─── Shared App State ─────────────────────────────────────────────────────────
+// A simple global state object that holds all data shared across screens.
+// It includes a basic listener system so that when weather data arrives
+// asynchronously, the InfoScreen can rebuild itself automatically.
 
 class AppState {
+  // User preferences
   String activity = 'Walk';
   int distance = 3;
+
+  // Location — defaults to Dubrovnik if GPS fails
   double lat = 42.6507;
   double lng = 18.0944;
   String locationName = 'Tap to get location';
   bool hasLocation = false;
+
+  // Weather data fetched from Open-Meteo API
   WeatherData? weather;
+
+  // Route data fetched from OSRM API
   List<LatLng>? routePoints;
   double? routeDistanceKm;
   int? routeTimeMin;
 
+  // Simple listener list — any widget can subscribe to be notified of changes
   final List<VoidCallback> _listeners = [];
 
   void addListener(VoidCallback cb) => _listeners.add(cb);
   void removeListener(VoidCallback cb) => _listeners.remove(cb);
+
+  // Call this after changing weather/location so subscribed widgets rebuild
   void notify() {
     for (final cb in List<VoidCallback>.from(_listeners)) {
       cb();
@@ -56,16 +86,18 @@ class AppState {
   }
 }
 
+// Single global instance shared by all screens
 final appState = AppState();
 
-// ─── Models ───────────────────────────────────────────────────────────────────
+// ─── Data Models ──────────────────────────────────────────────────────────────
 
+// Holds all weather data returned by the Open-Meteo API
 class WeatherData {
-  final double tempC;
-  final int humidity;
-  final double windKph;
-  final int code;
-  final List<HourlyForecast> forecast;
+  final double tempC; // Temperature in Celsius
+  final int humidity; // Relative humidity %
+  final double windKph; // Wind speed in km/h
+  final int code; // WMO weather code (0 = clear, higher = worse)
+  final List<HourlyForecast> forecast; // Morning/afternoon/evening forecast
 
   WeatherData({
     required this.tempC,
@@ -75,9 +107,11 @@ class WeatherData {
     required this.forecast,
   });
 
+  // Computed properties for display
   double get tempF => tempC * 9 / 5 + 32;
   int get windMph => (windKph * 0.621).round();
 
+  // Maps WMO weather code to an emoji
   String get emoji {
     if (code == 0) return '☀️';
     if (code <= 3) return '⛅';
@@ -88,6 +122,7 @@ class WeatherData {
     return '⛈️';
   }
 
+  // Maps WMO weather code to a text label
   String get label {
     if (code == 0) return 'Clear sky';
     if (code <= 3) return 'Partly cloudy';
@@ -98,14 +133,16 @@ class WeatherData {
     return 'Thunderstorm';
   }
 
+  // Returns true when conditions are safe and comfortable for exercise
   bool get isGoodForActivity =>
       code <= 3 && tempC > 5 && tempC < 35 && windKph < 40;
 }
 
+// Holds one row of the hourly forecast (morning / afternoon / evening)
 class HourlyForecast {
-  final String label;
-  final double tempF;
-  final String emoji;
+  final String label; // e.g. "Morning"
+  final double tempF; // Temperature in Fahrenheit
+  final String emoji; // Weather emoji
 
   HourlyForecast({
     required this.label,
@@ -115,6 +152,7 @@ class HourlyForecast {
 }
 
 // ─── Main Navigation ──────────────────────────────────────────────────────────
+// Holds the bottom navigation bar and switches between the 3 screens.
 
 class MainNavigation extends StatefulWidget {
   const MainNavigation({super.key});
@@ -126,24 +164,18 @@ class MainNavigation extends StatefulWidget {
 class _MainNavigationState extends State<MainNavigation> {
   int _selectedIndex = 0;
 
-  void _onTabTapped(int index) {
-    setState(() => _selectedIndex = index);
-  }
+  // Called by HomeScreen after a route is generated — jumps to Route tab
+  void _onRouteGenerated() => setState(() => _selectedIndex = 1);
 
-  void _onRouteGenerated() {
-    setState(() => _selectedIndex = 1);
-  }
+  // Called by RouteScreen "Generate Another" button — goes back to Home
+  void _onGenerateAnother() => setState(() => _selectedIndex = 0);
 
-  void _onGenerateAnother() {
-    setState(() => _selectedIndex = 0);
-  }
-
-  void _onStateChanged() {
-    setState(() {});
-  }
+  // Called by HomeScreen when location/weather updates — rebuilds nav
+  void _onStateChanged() => setState(() {});
 
   @override
   Widget build(BuildContext context) {
+    // IndexedStack keeps all 3 screens alive so state isn't lost on tab switch
     final pages = [
       HomeScreen(
         onRouteGenerated: _onRouteGenerated,
@@ -157,7 +189,8 @@ class _MainNavigationState extends State<MainNavigation> {
       body: IndexedStack(index: _selectedIndex, children: pages),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
-        onDestinationSelected: _onTabTapped,
+        onDestinationSelected: (index) =>
+            setState(() => _selectedIndex = index),
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.transparent,
         shadowColor: Colors.black12,
@@ -185,6 +218,7 @@ class _MainNavigationState extends State<MainNavigation> {
 }
 
 // ─── Home Screen ──────────────────────────────────────────────────────────────
+// Lets the user pick activity type and distance, then generate a route.
 
 class HomeScreen extends StatefulWidget {
   final VoidCallback onRouteGenerated;
@@ -203,18 +237,25 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   bool _generatingRoute = false;
 
+  // Available distance options shown as circles
   final List<int> _distances = [1, 3, 5, 8, 10];
 
+  // ── Location ──────────────────────────────────────────────────────────────
+  // Uses the Geolocator package to get GPS coordinates, then calls
+  // Nominatim (OpenStreetMap reverse geocoding API) to get the city name.
+  // After location is found, weather is fetched in the background.
   Future<void> _getLocation() async {
     setState(() => appState.locationName = 'Getting location...');
 
     try {
+      // Check if location services are enabled on the device
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
         setState(() => appState.locationName = 'Location services are off');
         return;
       }
 
+      // Check/request location permission
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
@@ -225,6 +266,7 @@ class _HomeScreenState extends State<HomeScreen> {
         return;
       }
 
+      // Get actual GPS coordinates from device
       final position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.medium,
@@ -236,17 +278,19 @@ class _HomeScreenState extends State<HomeScreen> {
       appState.lng = position.longitude;
       appState.hasLocation = true;
 
-      // Reverse geocode
+      // Reverse geocode: convert lat/lng → city name using Nominatim API
       try {
         final r = await http.get(
           Uri.parse(
-            'https://nominatim.openstreetmap.org/reverse?lat=${appState.lat}&lon=${appState.lng}&format=json',
+            'https://nominatim.openstreetmap.org/reverse'
+            '?lat=${appState.lat}&lon=${appState.lng}&format=json',
           ),
           headers: {'User-Agent': 'FitRouteApp/1.0'},
         );
         if (r.statusCode == 200) {
           final d = json.decode(r.body);
           final address = d['address'];
+          // Try city → town → village → county as fallback chain
           final city =
               address['city'] ??
               address['town'] ??
@@ -257,6 +301,7 @@ class _HomeScreenState extends State<HomeScreen> {
           appState.locationName = country.isNotEmpty ? '$city, $country' : city;
         }
       } catch (_) {
+        // If reverse geocoding fails, just show raw coordinates
         appState.locationName =
             '${appState.lat.toStringAsFixed(4)}, ${appState.lng.toStringAsFixed(4)}';
       }
@@ -264,15 +309,17 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {});
       widget.onStateChanged();
 
-      // Fetch weather in background
+      // Fetch weather in the background — when it arrives, notify all listeners
+      // including InfoScreen so it rebuilds and shows the weather card
       WeatherService.fetch(appState.lat, appState.lng).then((w) {
         if (w != null) {
           appState.weather = w;
-          appState.notify(); // notify InfoScreen to rebuild
+          appState.notify(); // triggers InfoScreen to rebuild
           widget.onStateChanged();
         }
       });
     } catch (_) {
+      // GPS failed — fall back to Dubrovnik as default location
       appState.lat = 42.6507;
       appState.lng = 18.0944;
       appState.locationName = 'Dubrovnik, Croatia';
@@ -282,41 +329,54 @@ class _HomeScreenState extends State<HomeScreen> {
       WeatherService.fetch(appState.lat, appState.lng).then((w) {
         if (w != null) {
           appState.weather = w;
-          appState.notify(); // notify InfoScreen to rebuild
+          appState.notify();
           widget.onStateChanged();
         }
       });
     }
   }
 
+  // ── Route Generation ──────────────────────────────────────────────────────
+  // Step 1: RouteGenerator.generate() creates circular waypoints sized to
+  //         match the user's selected distance (using circumference formula).
+  // Step 2: RouteGenerator.snapToRoads() sends those waypoints to the OSRM
+  //         routing API which snaps them to real walkable streets.
+  // Step 3: If OSRM returns a wildly wrong distance it is rejected and the
+  //         raw generated points are used as fallback.
   Future<void> _generateRoute() async {
     setState(() => _generatingRoute = true);
 
     try {
-      // Generate waypoints
+      final targetKm = appState.distance.toDouble();
+
+      // Generate circular waypoints whose total perimeter ≈ targetKm
       final points = RouteGenerator.generate(
         appState.lat,
         appState.lng,
-        appState.distance.toDouble(),
+        targetKm,
       );
 
-      // Snap to roads via OSRM
-      final result = await RouteGenerator.snapToRoads(points);
+      // Snap waypoints to real roads via OSRM API
+      final result = await RouteGenerator.snapToRoads(points, targetKm);
 
       if (result != null) {
+        // OSRM succeeded and distance is reasonable — use snapped route
         appState.routePoints = result.points;
         appState.routeDistanceKm = result.distanceKm;
+        // Walk pace ≈ 12 min/km, jog pace ≈ 7 min/km
         appState.routeTimeMin = appState.activity == 'Walk'
             ? (result.distanceKm * 12).round()
             : (result.distanceKm * 7).round();
       } else {
+        // OSRM failed or returned bad data — use raw generated points
         appState.routePoints = points;
-        appState.routeDistanceKm = appState.distance.toDouble();
+        appState.routeDistanceKm = targetKm;
         appState.routeTimeMin = appState.activity == 'Walk'
             ? appState.distance * 12
             : appState.distance * 7;
       }
 
+      // Switch to the Route tab
       widget.onRouteGenerated();
     } catch (e) {
       if (mounted) {
@@ -337,6 +397,7 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // App title
             const Text(
               'FitRoute',
               style: TextStyle(
@@ -346,6 +407,8 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             const SizedBox(height: 6),
+
+            // Tappable location row — tap to get GPS location
             GestureDetector(
               onTap: _getLocation,
               child: Row(
@@ -365,7 +428,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 32),
 
-            // Activity
+            // Activity selector
             const Text(
               'Activity',
               style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
@@ -394,7 +457,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 28),
 
-            // Distance
+            // Distance selector
             const Text(
               'Distance',
               style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
@@ -407,7 +470,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 28),
 
-            // Generate button
+            // Generate Route button
             SizedBox(
               width: double.infinity,
               height: 54,
@@ -469,6 +532,7 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 // ─── Activity Button ──────────────────────────────────────────────────────────
+// Animated button that highlights in blue (Walk) or green (Jog) when selected.
 
 class _ActivityButton extends StatelessWidget {
   final String label;
@@ -526,6 +590,7 @@ class _ActivityButton extends StatelessWidget {
 }
 
 // ─── Distance Card ────────────────────────────────────────────────────────────
+// Shows distance options as selectable circles and the current value large.
 
 class _DistanceCard extends StatelessWidget {
   final List<int> distances;
@@ -556,6 +621,7 @@ class _DistanceCard extends StatelessWidget {
       ),
       child: Column(
         children: [
+          // Row of distance circle buttons
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: distances.map((d) {
@@ -596,6 +662,7 @@ class _DistanceCard extends StatelessWidget {
             }).toList(),
           ),
           const Divider(height: 28),
+          // Large display of selected distance
           RichText(
             text: TextSpan(
               children: [
@@ -621,10 +688,10 @@ class _DistanceCard extends StatelessWidget {
 }
 
 // ─── Route Screen ─────────────────────────────────────────────────────────────
+// Displays the generated route on a flutter_map (OpenStreetMap) with stats.
 
 class RouteScreen extends StatefulWidget {
   final VoidCallback onGenerateAnother;
-
   const RouteScreen({super.key, required this.onGenerateAnother});
 
   @override
@@ -633,13 +700,11 @@ class RouteScreen extends StatefulWidget {
 
 class _RouteScreenState extends State<RouteScreen> {
   final MapController _mapController = MapController();
-  bool _isTracking = false;
+  bool _isTracking = false; // Toggles Start/Pause button state
 
   void _startRoute() {
     if (appState.routePoints == null) return;
-    setState(() {
-      _isTracking = !_isTracking;
-    });
+    setState(() => _isTracking = !_isTracking);
     if (_isTracking) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -656,6 +721,7 @@ class _RouteScreenState extends State<RouteScreen> {
     final dist = appState.routeDistanceKm;
     final time = appState.routeTimeMin;
 
+    // Show placeholder if no route has been generated yet
     if (points == null) {
       return const Center(
         child: Column(
@@ -683,16 +749,18 @@ class _RouteScreenState extends State<RouteScreen> {
 
     return Column(
       children: [
-        // Map
+        // ── Map (takes remaining screen space) ────────────────────────────
         Expanded(
           child: FlutterMap(
             mapController: _mapController,
-            options: MapOptions(initialCenter: points[0], initialZoom: 14),
+            options: MapOptions(initialCenter: points[0], initialZoom: 15),
             children: [
+              // OpenStreetMap tile layer
               TileLayer(
                 urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.example.fitroute',
               ),
+              // Blue polyline drawn along the route points
               PolylineLayer(
                 polylines: [
                   Polyline(
@@ -704,9 +772,9 @@ class _RouteScreenState extends State<RouteScreen> {
                   ),
                 ],
               ),
+              // Start (green) and end (red) markers
               MarkerLayer(
                 markers: [
-                  // Start
                   Marker(
                     point: points.first,
                     width: 24,
@@ -725,7 +793,6 @@ class _RouteScreenState extends State<RouteScreen> {
                       ),
                     ),
                   ),
-                  // End
                   Marker(
                     point: points.last,
                     width: 24,
@@ -750,14 +817,13 @@ class _RouteScreenState extends State<RouteScreen> {
           ),
         ),
 
-        // Bottom panel
+        // ── Bottom panel with stats and buttons ───────────────────────────
         Container(
           color: Colors.white,
           padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Stats row
+              // Stats row: distance / time / calories
               Row(
                 children: [
                   Expanded(
@@ -782,6 +848,7 @@ class _RouteScreenState extends State<RouteScreen> {
                     child: _InfoCard(
                       icon: Icons.local_fire_department_outlined,
                       label: 'Calories',
+                      // Walk burns ~60 kcal/km, jog burns ~80 kcal/km
                       value: dist != null
                           ? '${(dist * (appState.activity == 'Walk' ? 60 : 80)).round()} kcal'
                           : '—',
@@ -791,7 +858,7 @@ class _RouteScreenState extends State<RouteScreen> {
               ),
               const SizedBox(height: 12),
 
-              // Generate Another
+              // Generate another route button
               SizedBox(
                 width: double.infinity,
                 height: 44,
@@ -808,7 +875,7 @@ class _RouteScreenState extends State<RouteScreen> {
               ),
               const SizedBox(height: 10),
 
-              // Start Route
+              // Start / Pause route button
               SizedBox(
                 width: double.infinity,
                 height: 52,
@@ -842,6 +909,7 @@ class _RouteScreenState extends State<RouteScreen> {
   }
 }
 
+// Small stat card used in the Route screen bottom panel
 class _InfoCard extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -887,9 +955,9 @@ class _InfoCard extends StatelessWidget {
 }
 
 // ─── Info / Weather Screen ────────────────────────────────────────────────────
+// appState.notify() via addListener so it rebuilds the moment weather data
+// comes back from the Open-Meteo API call triggered on the Home screen.
 
-// FIX: Changed from StatelessWidget to StatefulWidget so it can react
-// to weather data arriving asynchronously via appState.notify().
 class InfoScreen extends StatefulWidget {
   const InfoScreen({super.key});
 
@@ -901,15 +969,19 @@ class _InfoScreenState extends State<InfoScreen> {
   @override
   void initState() {
     super.initState();
+    // Subscribe to global state changes — rebuilds this screen when
+    // appState.notify() is called (e.g. when weather or location updates)
     appState.addListener(_onAppStateChanged);
   }
 
   @override
   void dispose() {
+    // Always unsubscribe when the widget is removed to avoid memory leaks
     appState.removeListener(_onAppStateChanged);
     super.dispose();
   }
 
+  // Triggers a rebuild of this screen
   void _onAppStateChanged() {
     if (mounted) setState(() {});
   }
@@ -939,7 +1011,7 @@ class _InfoScreenState extends State<InfoScreen> {
             ),
             const SizedBox(height: 22),
 
-            // Weather card
+            // Show placeholder until weather data has loaded
             if (w == null)
               Container(
                 width: double.infinity,
@@ -965,17 +1037,18 @@ class _InfoScreenState extends State<InfoScreen> {
                 ),
               )
             else
+              // Weather card with temp, emoji, wind, humidity
               _WeatherCard(weather: w, locationName: appState.locationName),
 
             const SizedBox(height: 18),
 
-            // Condition card
+            // Good/bad conditions advice card
             if (w != null)
               _ConditionCard(weather: w, activity: appState.activity),
 
             const SizedBox(height: 16),
 
-            // Forecast
+            // Morning / Afternoon / Evening forecast rows
             if (w != null && w.forecast.isNotEmpty)
               _ForecastCard(forecast: w.forecast),
           ],
@@ -984,6 +1057,9 @@ class _InfoScreenState extends State<InfoScreen> {
     );
   }
 }
+
+// ─── Weather Card ─────────────────────────────────────────────────────────────
+// Blue gradient card showing temperature, emoji, wind, humidity, conditions.
 
 class _WeatherCard extends StatelessWidget {
   final WeatherData weather;
@@ -1061,6 +1137,7 @@ class _WeatherCard extends StatelessWidget {
   }
 }
 
+// Small column widget used inside the weather card
 class _WeatherMini extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -1096,6 +1173,9 @@ class _WeatherMini extends StatelessWidget {
   }
 }
 
+// ─── Condition Card ───────────────────────────────────────────────────────────
+// Green card for good conditions, yellow card for poor conditions.
+
 class _ConditionCard extends StatelessWidget {
   final WeatherData weather;
   final String activity;
@@ -1111,6 +1191,8 @@ class _ConditionCard extends StatelessWidget {
     final title = good
         ? 'Great conditions for outdoor activity'
         : 'Moderate conditions';
+
+    // Pick a message based on what the weather is actually like
     String body;
     if (good) {
       body =
@@ -1168,6 +1250,9 @@ class _ConditionCard extends StatelessWidget {
   }
 }
 
+// ─── Forecast Card ────────────────────────────────────────────────────────────
+// Shows morning / afternoon / evening temperature rows.
+
 class _ForecastCard extends StatelessWidget {
   final List<HourlyForecast> forecast;
 
@@ -1193,7 +1278,7 @@ class _ForecastCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            'Today\'s Forecast',
+            "Today's Forecast",
             style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
           ),
           const SizedBox(height: 14),
@@ -1224,11 +1309,14 @@ class _ForecastCard extends StatelessWidget {
   }
 }
 
-// ─── Services ─────────────────────────────────────────────────────────────────
+// ─── Weather Service ──────────────────────────────────────────────────────────
+// Calls the Open-Meteo API (free, no key needed) to get current weather
+// and an hourly forecast for the user's location.
 
 class WeatherService {
   static Future<WeatherData?> fetch(double lat, double lng) async {
     try {
+      // Build the Open-Meteo API request URL
       final url = Uri.parse(
         'https://api.open-meteo.com/v1/forecast'
         '?latitude=$lat&longitude=$lng'
@@ -1239,11 +1327,12 @@ class WeatherService {
       );
       final r = await http.get(url);
       if (r.statusCode != 200) return null;
-      final d = json.decode(r.body);
-      final c = d['current'];
-      final hourly = d['hourly'];
 
-      // Build forecast for morning / afternoon / evening
+      final d = json.decode(r.body);
+      final c = d['current']; // Current conditions
+      final hourly = d['hourly']; // Hourly forecast array
+
+      // Extract hourly arrays to build the 3-slot forecast
       final times = List<String>.from(hourly['time']);
       final hourlyTemps = List<double>.from(
         hourly['temperature_2m'].map((v) => v.toDouble()),
@@ -1252,6 +1341,7 @@ class WeatherService {
         hourly['weather_code'].map((v) => v as int),
       );
 
+      // Pick out morning (8am), afternoon (2pm), evening (7pm) slots
       List<HourlyForecast> forecast = [];
       for (final slot in [
         {'label': 'Morning', 'hour': 8},
@@ -1265,17 +1355,16 @@ class WeatherService {
           final tempF = hourlyTemps[idx] * 9 / 5 + 32;
           final code = hourlyCodes[idx];
           String emoji;
-          if (code == 0) {
+          if (code == 0)
             emoji = '☀️';
-          } else if (code <= 3) {
+          else if (code <= 3)
             emoji = '⛅';
-          } else if (code <= 48) {
+          else if (code <= 48)
             emoji = '🌫️';
-          } else if (code <= 67) {
+          else if (code <= 67)
             emoji = '🌧️';
-          } else {
+          else
             emoji = '⛈️';
-          }
           forecast.add(
             HourlyForecast(
               label: slot['label'] as String,
@@ -1294,10 +1383,20 @@ class WeatherService {
         forecast: forecast,
       );
     } catch (_) {
-      return null;
+      return null; // Silently fail — UI handles null weather
     }
   }
 }
+
+// ─── Route Generator ──────────────────────────────────────────────────────────
+// Step 1 — generate(): Creates waypoints in a circular loop.
+//   Uses the circumference formula: radius = targetKm / (2π)
+//   so that walking the full loop equals the selected distance.
+//
+// Step 2 — snapToRoads(): Sends waypoints to the OSRM routing API
+//   which returns a route snapped to real walkable streets.
+//   If OSRM returns a distance more than 2.5× the target (the old 16km bug),
+//   the result is rejected and the raw generated points are used instead.
 
 class RouteResult {
   final List<LatLng> points;
@@ -1306,34 +1405,46 @@ class RouteResult {
 }
 
 class RouteGenerator {
-  static List<LatLng> generate(double lat, double lng, double distanceKm) {
+  static const double _earthR = 6371.0; // Earth radius in km
+
+  /// Generates a roughly circular loop with perimeter ≈ targetKm.
+  static List<LatLng> generate(double lat, double lng, double targetKm) {
     final rng = Random();
-    const R = 6371.0;
 
-    // FIX: A loop route has perimeter ≈ 2πr, so radius = distance / (2π).
-    // Old code used distance/2 as radius, giving a ~3× longer route than intended.
-    final radiusKm = distanceKm / (2 * pi);
+    // radius = targetKm / (2π)  so circumference = 2π × radius = targetKm
+    final radiusKm = targetKm / (2 * pi);
+    final radiusDeg = radiusKm / _earthR * (180 / pi);
 
-    final points = <LatLng>[LatLng(lat, lng)];
-    final numWaypoints = max(4, min(8, distanceKm.round() + 2));
-    final angleOffset = rng.nextDouble() * 360;
+    // More waypoints for longer distances = smoother loop on the map
+    final numPoints = max(6, min(12, (targetKm * 2).round()));
 
-    for (int i = 1; i <= numWaypoints; i++) {
-      final angle = ((i / numWaypoints) * 360 + angleOffset) * pi / 180;
-      // FIX: tightened jitter from 0.3 → 0.15 so waypoints stay close to target circle
-      final jitter = (rng.nextDouble() - 0.5) * 0.15;
-      final r = (radiusKm / R) * (1 + jitter);
-      final newLat = lat + r * cos(angle) * (180 / pi);
-      final newLng = lng + r * sin(angle) * (180 / pi) / cos(lat * pi / 180);
+    // Random start angle so each generated route looks different
+    final angleOffset = rng.nextDouble() * 2 * pi;
+
+    final points = <LatLng>[];
+    for (int i = 0; i < numPoints; i++) {
+      final angle = angleOffset + (i / numPoints) * 2 * pi;
+      // Add ±10% jitter so it isn't a perfect circle
+      final jitter = 1.0 + (rng.nextDouble() - 0.5) * 0.2;
+      final r = radiusDeg * jitter;
+      final newLat = lat + r * sin(angle);
+      final newLng = lng + r * cos(angle) / cos(lat * pi / 180);
       points.add(LatLng(newLat, newLng));
     }
 
-    points.add(LatLng(lat, lng)); // loop back to start
+    // Close the loop by returning to the first point
+    points.add(points.first);
     return points;
   }
 
-  static Future<RouteResult?> snapToRoads(List<LatLng> points) async {
+  /// Snaps the generated waypoints to real roads using the OSRM API.
+  /// Returns null if the API fails OR if the result is too far off target.
+  static Future<RouteResult?> snapToRoads(
+    List<LatLng> points,
+    double targetKm,
+  ) async {
     try {
+      // Format waypoints as "lng,lat;lng,lat;..." for OSRM
       final coordStr = points
           .map((p) => '${p.longitude},${p.latitude}')
           .join(';');
@@ -1341,19 +1452,30 @@ class RouteGenerator {
         'https://router.project-osrm.org/route/v1/foot/$coordStr'
         '?overview=full&geometries=geojson&steps=false',
       );
-      final r = await http.get(url).timeout(const Duration(seconds: 10));
+      final r = await http.get(url).timeout(const Duration(seconds: 12));
       if (r.statusCode != 200) return null;
+
       final d = json.decode(r.body);
       if (d['code'] != 'Ok') return null;
+
       final route = d['routes'][0];
       final coords = route['geometry']['coordinates'] as List;
+
+      // Convert [lng, lat] pairs from GeoJSON to LatLng objects
       final snapped = coords
           .map<LatLng>((c) => LatLng(c[1].toDouble(), c[0].toDouble()))
           .toList();
+
       final distanceKm = (route['distance'] as num).toDouble() / 1000;
+
+      // FIX: Reject result if OSRM returned something wildly over target.
+      // This prevents the bug where selecting 1km gave a 16km route because
+      // OSRM was routing between waypoints in a way that inflated the path.
+      if (distanceKm > targetKm * 2.5) return null;
+
       return RouteResult(points: snapped, distanceKm: distanceKm);
     } catch (_) {
-      return null;
+      return null; // Timeout or network error — caller uses fallback
     }
   }
 }
